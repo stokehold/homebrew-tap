@@ -1,0 +1,61 @@
+name: tests
+
+# Taps this checkout as stokehold/tap and runs brew style, brew audit
+# --strict, brew install, and brew test on each formula. The ruleset on main
+# requires the three jobs, so a release pull request merges only when they
+# pass. With no formula in Formula/, each job passes with a message.
+on:
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: tests-${{ github.ref }}
+  cancel-in-progress: true
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  tests:
+    name: tests (${{ matrix.runner }})
+    strategy:
+      fail-fast: false
+      matrix:
+        runner: [macos-latest, macos-15-intel, ubuntu-latest]
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 30
+    env:
+      HOMEBREW_NO_AUTO_UPDATE: "1"
+      HOMEBREW_NO_ANALYTICS: "1"
+      HOMEBREW_NO_ENV_HINTS: "1"
+      HOMEBREW_NO_INSTALL_CLEANUP: "1"
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      # The Ubuntu image has Homebrew, but not on the PATH.
+      - name: Put Homebrew on the PATH
+        if: runner.os == 'Linux'
+        run: echo /home/linuxbrew/.linuxbrew/bin >> "$GITHUB_PATH"
+      - name: Test the formulae
+        run: |
+          shopt -s nullglob
+          formulae=(Formula/*.rb)
+          if [ "${#formulae[@]}" -eq 0 ]; then
+            echo "Formula/ has no formulae yet, so there is nothing to test."
+            exit 0
+          fi
+          brew --version
+          brew tap stokehold/tap "$GITHUB_WORKSPACE"
+          for file in "${formulae[@]}"; do
+            formula="stokehold/tap/$(basename "$file" .rb)"
+            echo "::group::$formula"
+            brew style "$formula"
+            brew audit --strict --formula "$formula"
+            brew install --formula "$formula"
+            brew test "$formula"
+            echo "::endgroup::"
+          done
